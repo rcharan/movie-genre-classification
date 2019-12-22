@@ -1,7 +1,11 @@
 import datetime
-import matplotlib.pyplot as plt
 import functools
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
+
 import os
 from joblib import dump, load
 
@@ -40,6 +44,56 @@ def print_dict(d):
     for k, v in d.items():
         print(f'{k.ljust(key_len)} : {v}')
 
+def drop_col(df, *cols):
+    df.drop(columns = list(cols), inplace = True)
+
+################################################################################
+#
+# Part 2: Plotting
+#
+################################################################################
+
+# Convenience to deal with turning off interactive mode
+def plot(fn, *args, **kwargs):
+    if 'figsize' in kwargs:
+        fig, ax = plt.subplots(figsize = kwargs['figsize'])
+        del kwargs['figsize']
+    else:
+        fig, ax = plt.subplots()
+    kwargs['ax'] = ax
+    fn(*args, **kwargs)
+    return fig
+
+# Minimal implementation to deal with use cases encountered
+#  does not implement the full seaborn API
+# For simplicity, pass a list of series with the data to be counted
+def stacked_countplot(*series, normalize = False, dropna = False):
+    df   = pd.concat(map(lambda s : s.value_counts(normalize = normalize,
+                                                   dropna    = dropna),
+                         series),
+                     axis = 'columns',
+                     sort = True
+                    ).fillna(0)
+    temp = df.sort_values(df.columns[0]).values.cumsum(axis = 0)
+    df = pd.DataFrame(temp, index = df.index, columns=df.columns
+                     ).sort_values(df.columns[0], ascending = False)
+
+    fig, ax = plt.subplots()
+    cmp = sns.color_palette('muted', n_colors = 9)
+
+    for i in range(len(df)):
+        sns.barplot(x = 'variable', y = 'value',
+                    data = df.iloc[[i]].melt(),
+                    ax = ax,
+                    label = df.index[i],
+                    color = cmp.pop())
+    ax.legend(bbox_to_anchor=(1.05, 1))
+    ax.set_xlabel('')
+    if normalize:
+        ax.set_ylabel('Frequency')
+    else:
+        ax.set_ylabel('Count')
+    return fig, ax
 
 
 ################################################################################
@@ -134,10 +188,3 @@ def get_fit_time(model_name):
 
 def write_fit_time(model_name, fit_time):
     return _fit_time_interface(model_name, fit_time)
-
-
-################################################################################
-#
-# Part 4 : sklearn subclassing
-#
-################################################################################
