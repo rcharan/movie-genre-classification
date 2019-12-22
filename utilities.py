@@ -95,6 +95,40 @@ def stacked_countplot(*series, normalize = False, dropna = False):
         ax.set_ylabel('Count')
     return fig, ax
 
+def rotate_labels(axes):
+  labels = axes.get_xticklabels()
+  for l in labels:
+    l.set_rotation('vertical')
+
+
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
+# Slight modification of sklearn's version to avoid re-predicting
+#  See documentation there
+def plot_confusion_matrix(estimator, y_pred, y_true, labels=None,
+                          sample_weight=None, normalize=None,
+                          display_labels=None, include_values=True,
+                          xticks_rotation='vertical',
+                          values_format=None,
+                          cmap=sns.cubehelix_palette(light=1, as_cmap=True),
+                          ax=None):
+    if normalize not in {'true', 'pred', 'all', None}:
+        raise ValueError("normalize must be one of {'true', 'pred', "
+                         "'all', None}")
+
+    cm = confusion_matrix(y_true, y_pred, sample_weight=sample_weight,
+                          labels=labels, normalize=normalize)
+
+    if display_labels is None:
+        if labels is None:
+            display_labels = estimator.classes_
+        else:
+            display_labels = labels
+
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                                  display_labels=display_labels)
+    return disp.plot(include_values=include_values,
+                     cmap=cmap, ax=ax, xticks_rotation=xticks_rotation)
 
 ################################################################################
 #
@@ -188,3 +222,17 @@ def get_fit_time(model_name):
 
 def write_fit_time(model_name, fit_time):
     return _fit_time_interface(model_name, fit_time)
+
+
+
+def get_learner(pipe_):
+    return pipe_.named_steps['learn']
+
+def get_best_learner(pipe_):
+    return get_learner(pipe_).best_estimator_
+
+def get_best_params(pipe_):
+    return get_best_learner(pipe_).get_params()
+
+def print_best_params(pipe_):
+    return print_dict(get_best_params(pipe_))
