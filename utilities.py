@@ -196,12 +196,12 @@ def persist(obj_name, model, method, *data, task = 'model', force_fit = False, *
 
 fit_time_fname = './models/fit_times.joblib'
 
-def _fit_time_interface(model_name, write = None):
+def _fit_time_interface(model_name, write = None, verbose = True):
     if os.path.exists(fit_time_fname):
         fit_time_dict = load(fit_time_fname)
     else:
         if not write:
-            print('No job time info found')
+            print('No job time info found at all')
             return None
         fit_time_dict = {}
 
@@ -211,14 +211,15 @@ def _fit_time_interface(model_name, write = None):
     else:
         if model_name in fit_time_dict:
             job_time = fit_time_dict[model_name]
-            print(f'{job_time} seconds elapsed in original job')
+            if verbose:
+                print(f'{job_time} seconds elapsed in original job')
             return job_time
         else:
             print(f'No job time found for {model_name}')
             return None
 
-def get_fit_time(model_name):
-    return _fit_time_interface(model_name)
+def get_fit_time(model_name, verbose = True):
+    return _fit_time_interface(model_name, verbose = verbose)
 
 def write_fit_time(model_name, fit_time):
     return _fit_time_interface(model_name, fit_time)
@@ -234,5 +235,43 @@ def get_best_learner(pipe_):
 def get_best_params(pipe_):
     return get_best_learner(pipe_).get_params()
 
-def print_best_params(pipe_):
-    return print_dict(get_best_params(pipe_))
+import sklearn.model_selection as cv
+def print_best_params(model):
+    if isinstance(model, cv.GridSearchCV):
+        return print_dict(model.best_estimator_.get_params())
+    else:
+        return print_dict(get_best_params(pipe_))
+
+import scipy.stats as st
+def cv_results(grid_search, p_thresh = 0.01):
+    df = pd.DataFrame(grid_search.cv_results_)
+
+    # Compute the statistical significance of the deviation from the leader
+    nobs = []
+    if hasattr(grid_search.cv, 'n_repeats'):
+        nobs.append(grid_search.cv.n_repeats)
+    if hasattr(grid_search.cv, 'get_n_splits'):
+        nobs.append(grid_search.cv.get_n_splits())
+    if not nobs:
+        print('Warning: unable to detect number of splits')
+        nobs = 1
+    else:
+        nobs = functools.reduce(lambda x, y : x * y, nobs)
+
+    df.sort_values('rank_test_score', inplace = True)
+    # df = df[cols].sort_values('rank_test_score')
+
+    @np.vectorize
+    def get_tvalue(index):
+        scores = df.iloc[[0, index]].loc[:,'split0_test_score' : f'split{nobs-1}_test_score']
+        a = scores.transpose().iloc[:,0]
+        b = scores.transpose().iloc[:,1]
+        p = st.ttest_rel(a, b).pvalue
+        return p < p_thresh
+
+    temp = pd.Series(get_tvalue(range(len(df))), index = df.index, name = 'statistically_different')
+
+    param_cols = lmap(lambda k : f'param_{k}', grid_search.param_grid.keys())
+    cols = param_cols + ['mean_test_score', 'std_test_score', 'rank_test_score', 'statistically_different']
+
+    return pd.concat([df, temp], axis = 'columns')[cols]
