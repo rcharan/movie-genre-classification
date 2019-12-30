@@ -33,3 +33,5 @@ classifier without much change in results.
 ## Results
 Most models were clustered in a range of F1 scores from 50–60% on a held-out validation set. The
 stacked classifier was able to accomplish about 66%.
+
+Note: fit times are reported in seconds of wall time, on a 2.7 GHz Intel Core i5 (dual core).
