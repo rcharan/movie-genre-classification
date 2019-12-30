@@ -453,7 +453,7 @@ def plot_multiclass_roc_curve(pred_scores, class_names, y_true,
             for f in f1_level_curves:
                 ax.plot(xs, get_level_curve(f), label = f'f1 = {f}')
 
-        ax.plot([fpr_actual], [tpr_actual], marker='o', markersize=10, color="red")
+        ax.plot([fpr_actual], [tpr_actual], marker='o', markersize=10, color="red", label = 'actual')
 
     list(fp.axes.values())[-1].legend(bbox_to_anchor=(1.05, 1))
     fp.fig.suptitle('ROC Curves for each Class\n with f1-score level curves')
