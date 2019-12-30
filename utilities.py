@@ -1,13 +1,14 @@
 import datetime
 import functools
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 
 import os
 from joblib import dump, load
+import matplotlib.pyplot as plt
+plt.ioff()
 
 
 ################################################################################
@@ -227,7 +228,10 @@ def write_fit_time(model_name, fit_time):
 
 
 def get_learner(pipe_):
-    return pipe_.named_steps['learn']
+    try:
+        return pipe_.named_steps['learn']
+    except:
+        return pipe_.steps[-1][1]
 
 def get_best_learner(pipe_):
     return get_learner(pipe_).best_estimator_
@@ -238,28 +242,22 @@ def get_best_params(pipe_):
 import sklearn.model_selection as cv
 def print_best_params(model):
     if isinstance(model, cv.GridSearchCV):
-        return print_dict(model.best_estimator_.get_params())
+        dict_ =  model.best_estimator_.get_params()
+        dict_ = {k : v for k, v in dict_.items() if k in model.param_grid}
+        return print_dict(dict_)
     else:
-        return print_dict(get_best_params(pipe_))
+        return print_dict(get_best_params(model))
 
 import scipy.stats as st
 def cv_results(grid_search, p_thresh = 0.01):
     df = pd.DataFrame(grid_search.cv_results_)
 
     # Compute the statistical significance of the deviation from the leader
-    nobs = []
-    if hasattr(grid_search.cv, 'n_repeats'):
-        nobs.append(grid_search.cv.n_repeats)
-    if hasattr(grid_search.cv, 'get_n_splits'):
-        nobs.append(grid_search.cv.get_n_splits())
-    if not nobs:
-        print('Warning: unable to detect number of splits')
-        nobs = 1
-    else:
-        nobs = functools.reduce(lambda x, y : x * y, nobs)
+    nobs = grid_search.cv.get_n_splits()
 
     df.sort_values('rank_test_score', inplace = True)
     # df = df[cols].sort_values('rank_test_score')
+
 
     @np.vectorize
     def get_tvalue(index):
@@ -271,7 +269,194 @@ def cv_results(grid_search, p_thresh = 0.01):
 
     temp = pd.Series(get_tvalue(range(len(df))), index = df.index, name = 'statistically_different')
 
-    param_cols = lmap(lambda k : f'param_{k}', grid_search.param_grid.keys())
+    if isinstance(grid_search.param_grid, list):
+        keys = list(set(sum((list(d.keys()) for d in grid_search.param_grid), [])))
+    else:
+        keys = grid_search.param_grid.keys()
+    param_cols = lmap(lambda k : f'param_{k}', keys)
     cols = param_cols + ['mean_test_score', 'std_test_score', 'rank_test_score', 'statistically_different']
 
     return pd.concat([df, temp], axis = 'columns')[cols]
+
+def plot_correlation_matrix(corr):
+
+    # Generate a mask for the upper triangle
+    mask = np.zeros_like(corr, dtype=np.bool)
+    mask[np.triu_indices_from(mask)] = True
+
+    # Set up the matplotlib figure
+    fig, ax = plt.subplots(figsize=(11, 9))
+
+    # Generate a custom diverging colormap
+    cmap = sns.diverging_palette(220, 10, as_cmap=True)
+
+    # Draw the heatmap with the mask and correct aspect ratio
+    sns.heatmap(corr, mask=mask, cmap=cmap, vmin=0, vmax=1,
+                square=True, linewidths=.5, cbar_kws={"shrink": .5}, ax = ax)
+
+    return fig
+
+
+
+def plot_roc_curve(fpr, tpr, ax = None):
+    if ax is None:
+        return_fig = True
+        fig, ax = plt.subplots()
+    else:
+        return_fig = False
+    ax.plot(fpr, tpr, label = 'ROC')
+    xs = np.linspace(0, 1, len(fpr))
+    ax.plot(xs, xs, label = 'Diagonal')
+    ax.set_xlim([-0.0, 1.0])
+    ax.set_ylim([0.0, 1.0])
+    ax.set_title('ROC Curve')
+    ax.set_xlabel('False Positive Rate (1 - Specificity)')
+    ax.set_ylabel('True Positive Rate (Sensitivity)')
+    ax.grid(True)
+    ax.set_aspect(1)
+    ax.legend()
+
+    if return_fig:
+        return fig
+
+
+
+from math import ceil, sqrt
+class FeaturePlot:
+    '''
+        Manages a figure containing plots of many unrelated variables
+        that would be unsuitable for a FacetGrid
+        To use: this is an iterable that will yield (col_name, data, axis)
+        for each variable it contains. For overlays, call overlay
+    '''
+    def __init__(self, *data, axsize = 4):
+        self.data     = pd.concat(data, axis = 'columns')
+        self.columns  = self.data.columns
+        self.num_cols = len(self.columns)
+        self._make_figure(axsize)
+
+    def clone(self):
+        return FeaturePlot(self.data)
+
+    def _make_figure(self, axsize):
+        '''
+           Makes the main figure
+        '''
+
+        # Compute the size and get fig, axes
+        s = ceil(sqrt(self.num_cols))
+        fig, axes = plt.subplots(s, s, figsize = (axsize*s, axsize*s));
+        axes = axes.ravel()
+
+        # Delete excess axes
+        to_delete = axes[self.num_cols:]
+        for ax in to_delete:
+            ax.remove()
+
+        # Retain references
+        self.fig  = fig
+        self.axes = dict(zip(self.columns, axes))
+
+        # Add titles
+        for col, ax in self.axes.items():
+            ax.set_title(col)
+
+        self.grid_size = s
+
+    def overlay(self, label, sharex = False, sharey = False):
+        '''
+            Adds a new layer of axes on top of an existing figure
+
+            - Is a generator in similar style to self.__iter__ below.
+            - A reference to the newly created axes is not maintained
+                 by the class - the axes are intended to be single use.
+                 If you want to access the axes later, either use the
+                 matplotlib figure object or retain a reference
+        '''
+        for index, col in enumerate(self.columns):
+            base_ax = self.axes[col]
+            ax = self.fig.add_subplot(self.grid_size, self.grid_size, index + 1,
+                                      sharex = base_ax if sharex else None,
+                                      sharey = base_ax if sharey else None,
+                                      label  = label,
+                                      facecolor = 'none')
+
+            for a in [ax, base_ax]:
+                if not sharex:
+                    a.tick_params(bottom = False,
+                                  top = False,
+                                  labelbottom = False,
+                                  labeltop    = False)
+                if not sharey:
+                    a.tick_params(left = False,
+                                  right = False,
+                                  labelleft = False,
+                                  labelright = False)
+
+
+            yield col, self.data[col].values, ax
+
+    def __iter__(self):
+        for col in self.columns:
+            yield col, self.data[col].values, self.axes[col]
+
+
+import sklearn.metrics as metr
+
+def plot_multiclass_roc_curve_from_dict(model_dict, y_true, f1_level_curves = None):
+    return plot_multiclass_roc_curve(
+        model_dict['predicted_probabilities'], model_dict['model'].classes_,
+        y_true, model_dict['predictions'], f1_level_curves
+
+    )
+
+def plot_multiclass_roc_curve(pred_scores, class_names, y_true,
+                              y_pred,
+                              f1_level_curves = None):
+    df  = pd.DataFrame(pred_scores, columns = class_names)
+    fp  = FeaturePlot(df, axsize = 6)
+    for col, scores, ax in fp:
+        bin_true = (y_true == col).astype(int)
+        bin_pred = (y_pred == col).astype(int)
+        fpr, tpr, _ = metr.roc_curve(bin_true, scores)
+        ax.plot(fpr, tpr, label = 'ROC', linewidth = 5)
+        xs = np.linspace(0, 1, len(fpr))
+        ax.plot(xs, xs, label = 'Diagonal', linewidth = 5)
+        offset = 0.02
+        ax.set_xlim([-offset, 1+offset])
+        ax.set_ylim([-offset, 1+offset])
+        ax.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+        ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+        ax.set_title(col.title())
+        # ax.set_xlabel('False Positive Rate (1 - Specificity)')
+        # ax.set_ylabel('True Positive Rate (Sensitivity)')
+        ax.grid(True)
+        ax.set_aspect(1)
+        # ax.legend()
+
+        # Plot Actual Location
+        report = metr.classification_report(bin_true, bin_pred, output_dict=True)
+        tpr_actual =     report['1']['recall']
+        fpr_actual = 1 - report['0']['recall']
+
+        # Plot f1 level curves
+        if f1_level_curves:
+            class_prevalence = report['1']['support']/len(y_true)
+            def prevalence_factor(class_prevalence):
+                return (1-class_prevalence)/class_prevalence
+            def f_factor(f):
+                return f/(2-f)
+            xs = np.linspace(-offset,1+offset, len(fpr))
+            def get_level_curve(f):
+                return f_factor(f) + \
+                       f_factor(f) * prevalence_factor(class_prevalence) * xs
+            for f in f1_level_curves:
+                ax.plot(xs, get_level_curve(f), label = f'f1 = {f}')
+
+        ax.plot([fpr_actual], [tpr_actual], marker='o', markersize=10, color="red")
+
+    list(fp.axes.values())[-1].legend(bbox_to_anchor=(1.05, 1))
+    fp.fig.suptitle('ROC Curves for each Class\n with f1-score level curves')
+
+
+    return fp.fig
